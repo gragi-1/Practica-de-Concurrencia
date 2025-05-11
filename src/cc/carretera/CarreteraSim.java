@@ -622,7 +622,7 @@ class Sim extends SwingWorker<Void,Object> {
               }
             } else {
               try {
-                Thread.sleep(5000);
+                Thread.sleep(500);
 
                 cmd = tickQueue.poll();
                 boolean stopped = (cmd != null && cmd == -1);
