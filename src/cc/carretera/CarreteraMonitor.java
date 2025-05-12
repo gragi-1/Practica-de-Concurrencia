@@ -6,28 +6,35 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Implementación del recurso compartido Carretera con Monitores
+ * Implementación del recurso compartido {@link Carretera} usando Monitores.
+ * Gestiona la ocupación de segmentos y carriles, el avance de los coches
+ * y el control de ticks (tiempo de circulación restante) de forma segura
+ * para múltiples hilos.
  */
 public class CarreteraMonitor implements Carretera {
-  // Estado de la carretera: matriz de ocupación (null si libre, id si ocupado)
+  // Matriz de ocupación [segmento][carril], almacena el id del coche o null si está libre
   private final String[][] ocupacion;
+
   // Ticks restantes para cada coche
-  private final Map<String, Integer> ticksRestantes;
-  // Posición actual de cada coche
-  private final Map<String, Pos> posiciones;
-  // Monitor y condición
-  private final Monitor mutex;
-  private final Monitor.Cond puedeMover;
-  private final Monitor.Cond puedeCircular;
-  // Dimensiones
-  private final int segmentos;
-  private final int carriles;
+  private final Map<String, Integer> ticksRestantes; // ticks de circulación pendientes
+  private final Map<String, Pos> posiciones; // posición actual (segmento, carril)
+
+  // Mecanismo de sincronización
+  private final Monitor mutex;  // monitor que protege toda la estructura
+  private final Monitor.Cond puedeMover;  // condición para avanzar a siguiente segmento
+  private final Monitor.Cond puedeCircular;// condición para consumir ticks en el mismo segmento
+  
+  // Tamaño de la carretera
+  private final int segmentos;  // número de segmentos en la carretera
+  private final int carriles; // número de carriles por segmento
 
   /**
+   * Constructor.
+   * Inicializa la matriz de ocupación a null (libre), así como los mapas y condiciones.
    * Crea una carretera con un número de segmentos y carriles.
    *
    * @param segmentos número de segmentos
-   * @param carriles número de carriles
+   * @param carriles número de carriles en cada segmento
    */
   public CarreteraMonitor(int segmentos, int carriles) {
     this.segmentos = segmentos;
@@ -38,14 +45,15 @@ public class CarreteraMonitor implements Carretera {
     this.mutex = new Monitor();
     this.puedeMover = mutex.newCond();
     this.puedeCircular = mutex.newCond();
-    // Inicialmente todo libre
+
+    // Marcamos todos los espacios como libres
     for (int i = 0; i < segmentos; i++)
       for (int j = 0; j < carriles; j++)
         ocupacion[i][j] = null;
   }
 
   /**
-   * Busca un carril libre en el primer segmento.
+   * Busca un carril libre en el primer segmento (índice 0).
    *
    * @return el índice del carril libre o -1 si no hay ninguno
    */
@@ -57,15 +65,17 @@ public class CarreteraMonitor implements Carretera {
   }
 
   /**
-   * Busca un carril libre en el segmento indicado.
+   * Permite a un coche entrar en el primer segmento.
+   * Si no hay hueco, espera hasta que otro coche avance o salga.
    *
-   * @param seg el segmento a comprobar
-   * @return el índice del carril libre o -1 si no hay ninguno
+   * @param id identificador único del coche
+   * @param tks ticks iniciales para este segmento
+   * @return posición asignada (segmento=1, carril)
    */
   public Pos entrar(String id, int tks) {
     mutex.enter();
     try {
-      // Esperar hasta que haya hueco en el primer segmento
+      // Espera hasta que haya al menos un carril libre en el segmento inicial
       while (buscarCarrilLibre() == -1) {
         puedeMover.await();
       }
@@ -73,7 +83,9 @@ public class CarreteraMonitor implements Carretera {
       ocupacion[0][carril] = id;
       posiciones.put(id, new Pos(1, carril + 1));
       ticksRestantes.put(id, tks);
-      puedeCircular.signal(); // Por si el coche espera para circular
+
+      // Despierta a cualquier hilo que estuviera esperando para circular en su segmento
+      puedeCircular.signal();
       return new Pos(1, carril + 1);
     } finally {
       mutex.leave();
@@ -82,10 +94,12 @@ public class CarreteraMonitor implements Carretera {
 
   /**
    * Avanza un coche al siguiente segmento.
+   * Primero consume todos sus ticks en el tramo actual,
+   * luego espera a que el carril siguiente esté libre.
    *
-   * @param id el identificador del coche
-   * @param tks el número de ticks restantes
-   * @return la nueva posición del coche
+   * @param id  identificador del coche
+   * @param tks ticks a asignar en el nuevo segmento
+   * @return nueva posición (segmento+1, mismo carril)
    */
   public Pos avanzar(String id, int tks) {
     mutex.enter();
@@ -93,18 +107,24 @@ public class CarreteraMonitor implements Carretera {
       Pos pos = posiciones.get(id);
       int seg = pos.getSegmento() - 1;
       int car = pos.getCarril() - 1;
+
+      // Si ya está en el último segmento, no mueve
       if (seg + 1 >= segmentos) {
         return new Pos(seg + 1, car + 1);
       }
-      // Esperar hasta que el siguiente segmento esté libre
+
+      // Espera mientras queden ticks o el siguiente carril esté ocupado
       while (ticksRestantes.get(id) > 0 || ocupacion[seg + 1][car] != null) {
         puedeMover.await();
       }
+
+      // Libera su posición anterior y ocupa la nueva
       ocupacion[seg][car] = null;
       ocupacion[seg + 1][car] = id;
       posiciones.put(id, new Pos(seg + 2, car + 1));
       ticksRestantes.put(id, tks);
-      // Solo un signal por evento
+
+      // Despierta a un hilo que pueda avanzar o circular
       if (puedeMover.waiting() > 0) {
         puedeMover.signal();
       } else if (puedeCircular.waiting() > 0) {
@@ -117,8 +137,8 @@ public class CarreteraMonitor implements Carretera {
   }
 
   /**
-   * Un coche "circula" a lo largo del segmento en el que está. La
-   * operación termina cuando el coche ha llegado al final del segmento.
+   * Fase de circulación dentro de un mismo segmento.
+   * El coche espera hasta consumir todos sus ticks antes de avanzar.
    *
    * @param id identificador del coche
    */
@@ -134,7 +154,8 @@ public class CarreteraMonitor implements Carretera {
   }
 
   /**
-   * Un coche abandona el último segmento.
+   * El coche abandona la carretera (último segmento).
+   * Libera su carril y notifica a otros hilos en espera.
    *
    * @param id identificador del coche
    */
@@ -144,10 +165,12 @@ public class CarreteraMonitor implements Carretera {
       Pos pos = posiciones.get(id);
       int seg = pos.getSegmento() - 1;
       int car = pos.getCarril() - 1;
+      
       ocupacion[seg][car] = null;
       posiciones.remove(id);
       ticksRestantes.remove(id);
-      // Solo un signal por evento
+      
+      // Notifica a un hilo que esté esperando avanzar o entrar
       if (puedeMover.waiting() > 0) {
         puedeMover.signal();
       } else if (puedeCircular.waiting() > 0) {
