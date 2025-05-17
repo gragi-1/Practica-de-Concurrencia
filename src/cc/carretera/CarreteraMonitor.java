@@ -65,6 +65,19 @@ public class CarreteraMonitor implements Carretera {
   }
 
   /**
+   * Busca un carril libre en el segmento indicado.
+   *
+   * @param seg índice de segmento (0-based)
+   * @return índice de carril libre, o -1 si todos están ocupados
+   */
+  private int buscarCarrilLibreEnSegmento(int seg) {
+    for (int c = 0; c < carriles; c++) {
+      if (ocupacion[seg][c] == null) return c;
+    }
+    return -1;
+  }
+
+  /**
    * Permite a un coche entrar en el primer segmento.
    * Si no hay hueco, espera hasta que otro coche avance o salga.
    *
@@ -79,6 +92,7 @@ public class CarreteraMonitor implements Carretera {
       while (buscarCarrilLibre() == -1) {
         puedeMover.await();
       }
+      // Asigna el coche a un carril libre en el primer segmento
       int carril = buscarCarrilLibre();
       ocupacion[0][carril] = id;
       posiciones.put(id, new Pos(1, carril + 1));
@@ -92,15 +106,7 @@ public class CarreteraMonitor implements Carretera {
     }
   }
 
-  /**
-   * Avanza un coche al siguiente segmento.
-   * Primero consume todos sus ticks en el tramo actual,
-   * luego espera a que el carril siguiente esté libre.
-   *
-   * @param id  identificador del coche
-   * @param tks ticks a asignar en el nuevo segmento
-   * @return nueva posición (segmento+1, mismo carril)
-   */
+  @Override
   public Pos avanzar(String id, int tks) {
     mutex.enter();
     try {
@@ -113,24 +119,28 @@ public class CarreteraMonitor implements Carretera {
         return new Pos(seg + 1, car + 1);
       }
 
-      // Espera mientras queden ticks o el siguiente carril esté ocupado
-      while (ticksRestantes.get(id) > 0 || ocupacion[seg + 1][car] != null) {
+      // Espera mientras queden ticks o no haya hueco en el siguiente segmento
+      while (ticksRestantes.get(id) > 0
+             || buscarCarrilLibreEnSegmento(seg + 1) < 0) {
         puedeMover.await();
       }
 
-      // Libera su posición anterior y ocupa la nueva
+      // Elige un carril libre en el siguiente segmento (posible cambio de carril)
+      int nuevoCarril = buscarCarrilLibreEnSegmento(seg + 1);
       ocupacion[seg][car] = null;
-      ocupacion[seg + 1][car] = id;
-      posiciones.put(id, new Pos(seg + 2, car + 1));
+      ocupacion[seg + 1][nuevoCarril] = id;
+      posiciones.put(id, new Pos(seg + 2, nuevoCarril + 1));
+
       ticksRestantes.put(id, tks);
 
-      // Despierta a un hilo que pueda avanzar o circular
+      // Despierta a otro hilo que pueda avanzar o circular
       if (puedeMover.waiting() > 0) {
         puedeMover.signal();
       } else if (puedeCircular.waiting() > 0) {
         puedeCircular.signal();
       }
-      return new Pos(seg + 2, car + 1);
+      return new Pos(seg + 2, /*carril*/ nuevoCarril + 1);
+
     } finally {
       mutex.leave();
     }
