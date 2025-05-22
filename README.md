@@ -46,7 +46,7 @@ En `CarreteraSim.java`, línea 533, sustituye la creación del monitor por la ve
 
 ```diff
 -      crPre = new CarreteraMonitor(segmentos, carriles);
-+      crPre = new CarreteraCSP(      segmentos, carriles);
++      crPre = new CarreteraCSP(segmentos, carriles);
 ```
 
 Después **recompila** todo antes de ejecutar de nuevo:
