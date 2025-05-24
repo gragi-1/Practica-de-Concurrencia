@@ -89,7 +89,7 @@ public class CarreteraMonitor implements Carretera {
       // y lo marca como ocupado
       int carril = buscarCarrilLibre(0);
       ocupacion[0][carril] = id;
-      posiciones.put(id, new Pos(1, carril + 1));
+      posiciones.put(id, new Pos(1, carril + 1)); // en matriz ocupacion [seg][carril]-> pos(seg+1, carril+1)
       ticksRestantes.put(id, tks);
 
       // Despierta a cualquier hilo que estuviera esperando para circular en su segmento
