@@ -15,7 +15,9 @@ import java.util.*;
  * @see Carretera
  */
 public class CarreteraMonitor implements Carretera {
-  // Matriz de ocupación: ocupacion[segmento][carril] = identificador del coche o null
+  /* Matriz de ocupación: ocupacion[segmento][carril] = identificador del coche o null
+   * Matriz con coordenadas (segmentos ,carril) -> pos(segmentos+1 ,carriles+1)
+   */
   private final String[][] ocupacion;
   // Número de ticks pendientes para cada coche
   private final Map<String,Integer> ticksRestantes;
@@ -23,15 +25,15 @@ public class CarreteraMonitor implements Carretera {
   private final Map<String,Pos> posiciones;
   // Monitor y listas de peticiones aplazadas
   private final Monitor mutex;
-  private final List<EntradaReq> pendingEntrar;       // peticiones de entrar
-  private final List<AvanzarReq> pendingAvanzar;     // peticiones de avanzar
-  private final List<CirculandoReq> pendingCirc;     // peticiones de circular
-  private final List<CambiarCarrilReq> pendingCambiar;// peticiones de cambio de carril
-  private final int segmentos, carriles;              // dimensiones de la carretera
+  private final List<EntradaReq> pendingEntrar;         // peticiones de entrar
+  private final List<AvanzarReq> pendingAvanzar;        // peticiones de avanzar
+  private final List<CirculandoReq> pendingCirc;        // peticiones de circular
+  private final List<CambiarCarrilReq> pendingCambiar;  // peticiones de cambio de carril
+  private final int segmentos, carriles;                // dimensiones de la carretera
 
   /**
    * Inicializa el Monitor para una carretera con los segmentos y carriles dados.
-   *
+   * 
    * @param segmentos número de segmentos consecutivos
    * @param carriles  número de carriles por segmento
    */
@@ -54,8 +56,8 @@ public class CarreteraMonitor implements Carretera {
 
   /**
    * Busca un carril libre en un segmento dado.
-   *
-   * @param seg índice del segmento (0-based)
+   * 
+   * @param seg índice del segmento
    * @return índice del carril libre, o -1 si ninguno está disponible
    */
   private int buscarCarrilLibre(int seg) {
@@ -68,8 +70,8 @@ public class CarreteraMonitor implements Carretera {
   /**
    * Busca otro carril distinto al actual que esté libre en el mismo segmento.
    *
-   * @param seg    índice del segmento (0-based)
-   * @param actual índice del carril actual (0-based)
+   * @param seg    índice del segmento
+   * @param actual índice del carril actual
    * @return índice de otro carril libre, o -1 si no hay disponible
    */
   private int buscarOtroCarrilLibre(int seg, int actual) {
@@ -81,7 +83,7 @@ public class CarreteraMonitor implements Carretera {
 
   // Clases internas para indexación de clientes (peticiones aplazadas)
 
-  /** Petición de entrada al primer segmento (almacena id, ticks y su condición). */
+  // Petición de entrada al primer segmento (almacena id, ticks y su condición).
   private class EntradaReq {
     final String id; final int tks; final Monitor.Cond cond;
     EntradaReq(String id, int tks) {
@@ -91,7 +93,7 @@ public class CarreteraMonitor implements Carretera {
     }
   }
 
-  /** Petición de avance de segmento (almacena id, ticks, segmento y carril). */
+  // Petición de avance de segmento (almacena id, ticks, segmento y carril).
   private class AvanzarReq {
     final String id; final int tks; final int seg, car; final Monitor.Cond cond;
     AvanzarReq(String id, int tks, int seg, int car) {
@@ -103,7 +105,7 @@ public class CarreteraMonitor implements Carretera {
     }
   }
 
-  /** Petición de circulación (espera a que los ticks lleguen a cero). */
+  // Petición de circulación (espera a que los ticks lleguen a cero).
   private class CirculandoReq {
     final String id; final Monitor.Cond cond;
     CirculandoReq(String id) {
@@ -112,7 +114,7 @@ public class CarreteraMonitor implements Carretera {
     }
   }
 
-  /** Petición de cambio de carril (espera ticks a cero y disponibilidad de otro carril). */
+  // Petición de cambio de carril (espera ticks a cero y disponibilidad de otro carril).
   private class CambiarCarrilReq {
     final String id; final Monitor.Cond cond;
     CambiarCarrilReq(String id) {
@@ -123,7 +125,7 @@ public class CarreteraMonitor implements Carretera {
 
   // Métodos de señalización para despertar peticiones pendientes
 
-  /** Despierta la primera petición de entrar si hay carril libre en el segmento 0. */
+  // Despierta la primera petición de entrar si hay carril libre en el segmento 0.
   private void señalizarEntrar() {
     Iterator<EntradaReq> it = pendingEntrar.iterator();
     while (it.hasNext()) {
@@ -136,7 +138,7 @@ public class CarreteraMonitor implements Carretera {
     }
   }
 
-  /** Despierta la primera petición de avanzar si cumple ticks==0 y hay hueco. */
+  // Despierta la primera petición de avanzar si cumple ticks==0 y hay hueco.
   private void señalizarAvanzar() {
     Iterator<AvanzarReq> it = pendingAvanzar.iterator();
     while (it.hasNext()) {
@@ -150,7 +152,7 @@ public class CarreteraMonitor implements Carretera {
     }
   }
 
-  /** Despierta la primera petición de circular cuando ticks==0. */
+  // Despierta la primera petición de circular cuando ticks==0.
   private void señalizarCirculando() {
     Iterator<CirculandoReq> it = pendingCirc.iterator();
     while (it.hasNext()) {
@@ -163,7 +165,7 @@ public class CarreteraMonitor implements Carretera {
     }
   }
 
-  /** Despierta la primera petición de cambio de carril que pueda ejecutarse. */
+  // Despierta la primera petición de cambio de carril que pueda ejecutarse.
   private void señalizarCambiar() {
     Iterator<CambiarCarrilReq> it = pendingCambiar.iterator();
     while (it.hasNext()) {
@@ -179,7 +181,6 @@ public class CarreteraMonitor implements Carretera {
     }
   }
 
-  /** {@inheritDoc} */
   @Override
   public Pos entrar(String id, int tks) {
     mutex.enter();
@@ -204,7 +205,6 @@ public class CarreteraMonitor implements Carretera {
     }
   }
 
-  /** {@inheritDoc} */
   @Override
   public Pos avanzar(String id, int tks) {
     mutex.enter();
@@ -245,7 +245,7 @@ public class CarreteraMonitor implements Carretera {
     }
   }
 
-  /** {@inheritDoc} */
+
   @Override
   public void circulando(String id) {
     mutex.enter();
@@ -265,13 +265,13 @@ public class CarreteraMonitor implements Carretera {
     }
   }
 
-  /** {@inheritDoc} */
+
   @Override
   public void salir(String id) {
     mutex.enter();
     try {
       Pos p = posiciones.remove(id);
-      int seg = p.getSegmento() - 1, car = p.getCarril() - 1;
+      int seg = p.getSegmento() - 1, car = p.getCarril() - 1; // pasamos a coordenadas de matriz
       ocupacion[seg][car] = null;
       ticksRestantes.remove(id);
       señalizarEntrar();
@@ -283,7 +283,6 @@ public class CarreteraMonitor implements Carretera {
     }
   }
 
-  /** {@inheritDoc} */
   @Override
   public void tick() {
     mutex.enter();
