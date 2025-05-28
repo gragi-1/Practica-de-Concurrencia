@@ -4,253 +4,200 @@ import org.jcsp.lang.*;
 import java.util.*;
 
 public class CarreteraCSP implements Carretera, CSProcess {
-    // Canales para cada operación
+    // Canales de petición
     private final Any2OneChannel entrarCh = Channel.any2one();
     private final Any2OneChannel avanzarCh = Channel.any2one();
-    private final Any2OneChannel salirCh = Channel.any2one();
     private final Any2OneChannel circulandoCh = Channel.any2one();
+    private final Any2OneChannel salirCh = Channel.any2one();
     private final Any2OneChannel tickCh = Channel.any2one();
 
-    // Configuración de la carretera
-    private final int segmentos;
-    private final int carriles;
+    // Estado interno
+    private final int segmentos, carriles;
+    private final String[][] ocupacion;
+    private final Map<String, Pos> posiciones = new HashMap<>();
+    private final Map<String, Integer> ticksRem = new HashMap<>();
+
+    // Colas de peticiones aplazadas
+    private final Queue<EntrarMsg> pendingEntrar = new LinkedList<>();
+    private final Queue<AvanzarMsg> pendingAvanzar = new LinkedList<>();
+    private final Queue<CirculandoMsg> pendingCirc = new LinkedList<>();
 
     public CarreteraCSP(int segmentos, int carriles) {
         this.segmentos = segmentos;
         this.carriles = carriles;
+        this.ocupacion = new String[segmentos][carriles];
         new ProcessManager(this).start();
     }
 
-    // Mensajes para cada operación
+    // Mensajes de petición
     private static class EntrarMsg {
-        String id;
-        int tks;
-        ChannelOutput resp;
+        final String id;
+        final int tks;
+        final ChannelOutput resp;
         EntrarMsg(String id, int tks, ChannelOutput resp) {
-            this.id = id; this.tks = tks; this.resp = resp;
+            this.id = id;
+            this.tks = tks;
+            this.resp = resp;
         }
     }
     private static class AvanzarMsg {
-        String id;
-        int tks;
-        ChannelOutput resp;
+        final String id;
+        final int tks;
+        final ChannelOutput resp;
         AvanzarMsg(String id, int tks, ChannelOutput resp) {
-            this.id = id; this.tks = tks; this.resp = resp;
+            this.id = id;
+            this.tks = tks;
+            this.resp = resp;
         }
     }
-    private static class SalirMsg {
-        String id;
-        SalirMsg(String id) { this.id = id; }
-    }
     private static class CirculandoMsg {
-        String id;
-        ChannelOutput resp;
-        CirculandoMsg(String id, ChannelOutput resp) { this.id = id; this.resp = resp; }
+        final String id;
+        final ChannelOutput resp;
+        CirculandoMsg(String id, ChannelOutput resp) {
+            this.id = id;
+            this.resp = resp;
+        }
     }
-    private static class TickMsg {
-        TickMsg() {}
-    }
+    private static class SalirMsg { final String id; SalirMsg(String id) { this.id = id; } }
+    private static class TickMsg { }
 
-    // Métodos cliente
-    public Pos entrar(String car, int tks) {
+    // Métodos cliente: envían péticion y esperan respuesta si aplica
+    public Pos entrar(String id, int tks) {
         One2OneChannel resp = Channel.one2one();
-        entrarCh.out().write(new EntrarMsg(car, tks, resp.out()));
+        entrarCh.out().write(new EntrarMsg(id, tks, resp.out()));
         return (Pos) resp.in().read();
     }
-    public Pos avanzar(String car, int tks) {
+    public Pos avanzar(String id, int tks) {
         One2OneChannel resp = Channel.one2one();
-        avanzarCh.out().write(new AvanzarMsg(car, tks, resp.out()));
+        avanzarCh.out().write(new AvanzarMsg(id, tks, resp.out()));
         return (Pos) resp.in().read();
     }
-    public void salir(String car) {
-        salirCh.out().write(new SalirMsg(car));
-    }
-    public void circulando(String car) {
+    public void circulando(String id) {
         One2OneChannel resp = Channel.one2one();
-        circulandoCh.out().write(new CirculandoMsg(car, resp.out()));
+        circulandoCh.out().write(new CirculandoMsg(id, resp.out()));
         resp.in().read();
+    }
+    public void salir(String id) {
+        salirCh.out().write(new SalirMsg(id));
     }
     public void tick() {
         tickCh.out().write(new TickMsg());
     }
 
-    // Código del servidor
+    // Utility de búsqueda
+    private int buscarCarrilLibre(int seg) {
+        for (int c = 0; c < carriles; c++) {
+            if (ocupacion[seg][c] == null) return c;
+        }
+        return -1;
+    }
+
     public void run() {
-        // Estado de la carretera
-        boolean[][] ocupado = new boolean[segmentos+1][carriles+1]; // [segmento][carril]
-        Map<String, Pos> posiciones = new HashMap<>();
-        Map<String, Integer> ticksRem = new HashMap<>();
-
-        // Colas de espera para operaciones bloqueantes
-        Queue<EntrarMsg> colaEntrar = new LinkedList<>();
-        Queue<AvanzarMsg> colaAvanzar = new LinkedList<>();
-        Queue<CirculandoMsg> colaCirculando = new LinkedList<>();
-
-        Guard[] guards = new Guard[] {
+        Guard[] guards = new Guard[]{
             entrarCh.in(), avanzarCh.in(), salirCh.in(), circulandoCh.in(), tickCh.in()
         };
-        Alternative servicios = new Alternative(guards);
-
+        Alternative alt = new Alternative(guards);
+        
         while (true) {
-            // Calcular guardas activas
-            boolean[] enabled = new boolean[5];
-            enabled[0] = true; // entrar siempre puede recibir
-            enabled[1] = true; // avanzar siempre puede recibir
-            enabled[2] = true; // salir siempre puede recibir
-            enabled[3] = true; // circulando siempre puede recibir
-            enabled[4] = true; // tick siempre puede recibir
-
-            int servicio = servicios.fairSelect(enabled);
-
-            switch (servicio) {
+            int sel = alt.fairSelect();
+            switch (sel) {
                 case 0: { // entrar
-                    EntrarMsg msg = (EntrarMsg) entrarCh.in().read();
-                    boolean colocado = false;
-                    for (int l = 1; l <= carriles; l++) {
-                        if (!ocupado[1][l]) {
-                            ocupado[1][l] = true;
-                            posiciones.put(msg.id, new Pos(1, l));
-                            ticksRem.put(msg.id, msg.tks);
-                            msg.resp.write(new Pos(1, l));
-                            colocado = true;
-                            break;
-                        }
-                    }
-                    if (!colocado) {
-                        colaEntrar.add(msg);
-                    }
+                    EntrarMsg m = (EntrarMsg) entrarCh.in().read();
+                    if (!procesarEntrar(m)) pendingEntrar.add(m);
                     break;
                 }
                 case 1: { // avanzar
-                    AvanzarMsg msg = (AvanzarMsg) avanzarCh.in().read();
-                    Pos cur = posiciones.get(msg.id);
-                    int nextSeg = cur.getSegmento() + 1;
-                    if (nextSeg > segmentos) {
-                        ocupado[cur.getSegmento()][cur.getCarril()] = false;
-                        posiciones.remove(msg.id);
-                        ticksRem.remove(msg.id);
-                        msg.resp.write(new Pos(nextSeg, cur.getCarril()));
-                        // Intentar atender coches esperando entrar
-                        atenderEntrar(ocupado, posiciones, ticksRem, colaEntrar);
-                    } else {
-                        boolean colocado = false;
-                        for (int l = 1; l <= carriles; l++) {
-                            if (!ocupado[nextSeg][l]) {
-                                ocupado[cur.getSegmento()][cur.getCarril()] = false;
-                                ocupado[nextSeg][l] = true;
-                                posiciones.put(msg.id, new Pos(nextSeg, l));
-                                ticksRem.put(msg.id, msg.tks);
-                                msg.resp.write(new Pos(nextSeg, l));
-                                colocado = true;
-                                // Intentar atender coches esperando entrar
-                                atenderEntrar(ocupado, posiciones, ticksRem, colaEntrar);
-                                break;
-                            }
-                        }
-                        if (!colocado) {
-                            colaAvanzar.add(msg);
-                        }
-                    }
+                    AvanzarMsg m = (AvanzarMsg) avanzarCh.in().read();
+                    if (!procesarAvanzar(m)) pendingAvanzar.add(m);
                     break;
                 }
                 case 2: { // salir
-                    SalirMsg msg = (SalirMsg) salirCh.in().read();
-                    Pos cur = posiciones.get(msg.id);
-                    if (cur != null) {
-                        ocupado[cur.getSegmento()][cur.getCarril()] = false;
-                        posiciones.remove(msg.id);
-                        ticksRem.remove(msg.id);
-                        // Intentar atender coches esperando entrar
-                        atenderEntrar(ocupado, posiciones, ticksRem, colaEntrar);
-                    }
+                    SalirMsg m = (SalirMsg) salirCh.in().read();
+                    procesarSalir(m.id);
                     break;
                 }
                 case 3: { // circulando
-                    CirculandoMsg msg = (CirculandoMsg) circulandoCh.in().read();
-                    if (ticksRem.get(msg.id) != null && ticksRem.get(msg.id) > 0) {
-                        colaCirculando.add(msg);
-                    } else {
-                        msg.resp.write(null);
-                    }
+                    CirculandoMsg m = (CirculandoMsg) circulandoCh.in().read();
+                    if (!procesarCirculando(m)) pendingCirc.add(m);
                     break;
                 }
                 case 4: { // tick
                     tickCh.in().read();
-                    Set<String> coches = new HashSet<>(ticksRem.keySet());
-                    for (String id : coches) {
-                        Integer t = ticksRem.get(id);
-                        if (t != null && t > 0) {
-                            ticksRem.put(id, t - 1);
-                        }
-                    }
-                    // Atender circulando si corresponde
-                    Iterator<CirculandoMsg> it = colaCirculando.iterator();
-                    while (it.hasNext()) {
-                        CirculandoMsg msg = it.next();
-                        Integer t = ticksRem.get(msg.id);
-                        if (t != null && t <= 0) {
-                            msg.resp.write(null);
-                            it.remove();
-                        }
-                    }
-                    // Atender avanzar si corresponde
-                    Iterator<AvanzarMsg> it2 = colaAvanzar.iterator();
-                    while (it2.hasNext()) {
-                        AvanzarMsg msg = it2.next();
-                        Pos cur = posiciones.get(msg.id);
-                        if (cur == null) { it2.remove(); continue; }
-                        int nextSeg = cur.getSegmento() + 1;
-                        if (nextSeg > segmentos) {
-                            ocupado[cur.getSegmento()][cur.getCarril()] = false;
-                            posiciones.remove(msg.id);
-                            ticksRem.remove(msg.id);
-                            msg.resp.write(new Pos(nextSeg, cur.getCarril()));
-                            it2.remove();
-                            atenderEntrar(ocupado, posiciones, ticksRem, colaEntrar);
-                        } else {
-                            boolean colocado = false;
-                            for (int l = 1; l <= carriles; l++) {
-                                if (!ocupado[nextSeg][l]) {
-                                    ocupado[cur.getSegmento()][cur.getCarril()] = false;
-                                    ocupado[nextSeg][l] = true;
-                                    posiciones.put(msg.id, new Pos(nextSeg, l));
-                                    ticksRem.put(msg.id, msg.tks);
-                                    msg.resp.write(new Pos(nextSeg, l));
-                                    colocado = true;
-                                    it2.remove();
-                                    atenderEntrar(ocupado, posiciones, ticksRem, colaEntrar);
-                                    break;
-                                }
-                            }
-                            if (!colocado) {
-                                // sigue esperando
-                            }
-                        }
-                    }
+                    ticksRem.keySet().forEach(id ->
+                        ticksRem.put(id, Math.max(0, ticksRem.get(id) - 1))
+                    );
                     break;
                 }
             }
+            // Tras cualquier evento, intentar despachar colas
+            boolean progreso;
+            do {
+                progreso = false;
+                Iterator<EntrarMsg> itE = pendingEntrar.iterator();
+                while (itE.hasNext()) {
+                    if (procesarEntrar(itE.next())) { itE.remove(); progreso = true; break; }
+                }
+                Iterator<AvanzarMsg> itA = pendingAvanzar.iterator();
+                while (itA.hasNext()) {
+                    if (procesarAvanzar(itA.next())) { itA.remove(); progreso = true; break; }
+                }
+                Iterator<CirculandoMsg> itC = pendingCirc.iterator();
+                while (itC.hasNext()) {
+                    if (procesarCirculando(itC.next())) { itC.remove(); progreso = true; break; }
+                }
+            } while (progreso);
         }
     }
 
-    // Método auxiliar para atender coches esperando entrar
-    private void atenderEntrar(boolean[][] ocupado, Map<String, Pos> posiciones, Map<String, Integer> ticksRem, Queue<EntrarMsg> colaEntrar) {
-        Iterator<EntrarMsg> it = colaEntrar.iterator();
-        while (it.hasNext()) {
-            EntrarMsg msg = it.next();
-            boolean colocado = false;
-            for (int l = 1; l <= carriles; l++) {
-                if (!ocupado[1][l]) {
-                    ocupado[1][l] = true;
-                    posiciones.put(msg.id, new Pos(1, l));
-                    ticksRem.put(msg.id, msg.tks);
-                    msg.resp.write(new Pos(1, l));
-                    colocado = true;
-                    it.remove();
-                    break;
-                }
-            }
-            if (!colocado) break;
+    // Procesamiento de cada operación: devuelve true si se atendió
+    private boolean procesarEntrar(EntrarMsg m) {
+        int carril = buscarCarrilLibre(0);
+        if (carril < 0) return false;
+        ocupacion[0][carril] = m.id;
+        posiciones.put(m.id, new Pos(1, carril+1));
+        ticksRem.put(m.id, m.tks);
+        m.resp.write(new Pos(1, carril+1));
+        return true;
+    }
+
+    private boolean procesarAvanzar(AvanzarMsg m) {
+        Pos p = posiciones.get(m.id);
+        if (p == null) return false;
+        if (ticksRem.get(m.id) > 0) return false;
+        int seg = p.getSegmento() - 1;
+        int next = seg + 1;
+        // salir
+        if (next >= segmentos) {
+            ocupacion[seg][p.getCarril()-1] = null;
+            posiciones.remove(m.id);
+            ticksRem.remove(m.id);
+            m.resp.write(new Pos(next+1, p.getCarril()));
+            return true;
+        }
+        int carril = buscarCarrilLibre(next);
+        if (carril < 0) return false;
+        ocupacion[seg][p.getCarril()-1] = null;
+        ocupacion[next][carril] = m.id;
+        posiciones.put(m.id, new Pos(next+1, carril+1));
+        ticksRem.put(m.id, m.tks);
+        m.resp.write(new Pos(next+1, carril+1));
+        return true;
+    }
+
+    private boolean procesarCirculando(CirculandoMsg m) {
+        Integer t = ticksRem.get(m.id);
+        if (t != null && t <= 0) {
+            m.resp.write(null);
+            return true;
+        }
+        return false;
+    }
+
+    private void procesarSalir(String id) {
+        Pos p = posiciones.remove(id);
+        if (p != null) {
+            ocupacion[p.getSegmento()-1][p.getCarril()-1] = null;
+            ticksRem.remove(id);
         }
     }
 }
