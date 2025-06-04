@@ -137,7 +137,7 @@ public class CarreteraCSP implements Carretera, CSProcess {
     /**
      * buscar un carril libre en un segmento concreto
      * @param id Identificador del coche
-     * @return El índice del primer carril libre en el segmento dado, o -1 si no hay ninguno.
+     * @return El indice del primer carril libre en el segmento dado, o -1 si no hay ninguno.
      */
     private int buscarCarrilLibre(int seg) {
         for (int c = 0; c < carriles; c++) {
@@ -152,7 +152,7 @@ public class CarreteraCSP implements Carretera, CSProcess {
      */
     public void run() {
         Guard[] guards = new Guard[]{
-            // Array de "guards" para esperar peticiones en los canales
+            // Array de guards para esperar peticiones en los canales
             entrarCh.in(), avanzarCh.in(), salirCh.in(), circulandoCh.in(), tickCh.in()
         };
         Alternative alt = new Alternative(guards); // Permite seleccionar entre varias peticiones
@@ -242,7 +242,7 @@ public class CarreteraCSP implements Carretera, CSProcess {
      * @return  devuelve true si la peticion fue atendida, false si no hay hueco o debe esperar.
      */
     private boolean procesarAvanzar(AvanzarMsg m) {
-        Pos p = posiciones.get(m.id);               // Obtenemos la posición actual del coche
+        Pos p = posiciones.get(m.id);               // Obtenemos la posicion actual del coche
         if (p == null) return false; 
         if (ticksRem.get(m.id) > 0) return false;   // Debe esperar más ticks
 
@@ -251,10 +251,10 @@ public class CarreteraCSP implements Carretera, CSProcess {
 
         // Si llega al final, sale de la carretera
         if (next >= segmentos) {
-            ocupacion[seg][p.getCarril()-1] = null;         // Liberamos la posición actual
+            ocupacion[seg][p.getCarril()-1] = null;         // Liberamos la posicion actual
             posiciones.remove(m.id);
             ticksRem.remove(m.id);
-            m.resp.write(new Pos(next+1, p.getCarril()));   // Respondemos con la nueva posición (fuera de la carretera)
+            m.resp.write(new Pos(next+1, p.getCarril()));   // Respondemos con la nueva posicion (fuera de la carretera)
             return true;
         }
 
@@ -262,8 +262,8 @@ public class CarreteraCSP implements Carretera, CSProcess {
         int carril = buscarCarrilLibre(next);
         if (carril < 0) return false;                       // No hay hueco en el siguiente segmento
 
-        ocupacion[seg][p.getCarril()-1] = null;             // Liberamos la posición actual
-        ocupacion[next][carril] = m.id;                     // Ocupamos la nueva posición
+        ocupacion[seg][p.getCarril()-1] = null;             // Liberamos la posicion actual
+        ocupacion[next][carril] = m.id;                     // Ocupamos la nueva posicion
         posiciones.put(m.id, new Pos(next+1, carril+1));
         ticksRem.put(m.id, m.tks);                          // Reiniciamos los ticks de espera para el siguiente avance
         m.resp.write(new Pos(next+1, carril+1));
@@ -271,10 +271,10 @@ public class CarreteraCSP implements Carretera, CSProcess {
     }
 
     /**
-     * Procesa una petición de "circulando", es decir, el coche pregunta si ya puede avanzar.
+     * Procesa una peticion de "circulando", es decir, el coche pregunta si ya puede avanzar.
      * Si ya ha esperado los ticks necesarios, se le responde para que pueda avanzar.
      * @param m Mensaje de circulando que contiene el id del coche y canal de respuesta
-     * @return  Devuelve true si la petición fue atendida, false si debe seguir esperando.
+     * @return  Devuelve true si la peticion fue atendida, false si debe seguir esperando.
      */
     private boolean procesarCirculando(CirculandoMsg m) {
         Integer t = ticksRem.get(m.id);
@@ -286,13 +286,13 @@ public class CarreteraCSP implements Carretera, CSProcess {
     }
 
     /**
-     * Procesa la salida de un coche: libera su posición en la carretera y elimina su información.
+     * Procesa la salida de un coche: libera su posicion en la carretera y elimina su informacion.
      * @param id Identificador del coche que sale
      */
     private void procesarSalir(String id) {
-        Pos p = posiciones.remove(id);                              // Quitamos la posición del coche
+        Pos p = posiciones.remove(id);                              // Quitamos la posicion del coche
         if (p != null) {
-            ocupacion[p.getSegmento()-1][p.getCarril()-1] = null;   // Liberamos la posición en la matriz
+            ocupacion[p.getSegmento()-1][p.getCarril()-1] = null;   // Liberamos la posicion en la matriz
             ticksRem.remove(id);                                    // Eliminamos los ticks pendientes
         }
     }
