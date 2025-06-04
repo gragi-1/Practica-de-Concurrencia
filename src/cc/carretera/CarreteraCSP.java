@@ -1,9 +1,7 @@
 package cc.carretera;
 
 import org.jcsp.lang.*;
-
-import java.nio.channels.Channel;
-import java.security.Guard;
+import org.jcsp.lang.Guard;
 import java.util.*;
 
 public class CarreteraCSP implements Carretera, CSProcess {
@@ -158,7 +156,7 @@ public class CarreteraCSP implements Carretera, CSProcess {
         Alternative alt = new Alternative(guards); // Permite seleccionar entre varias peticiones
         
         while (true) {
-            int sel = alt.fairSelect(); // Espera una peticion y selecciona cuál atender
+            int sel = alt.fairSelect(); // Espera una peticion y selecciona cual atender
             switch (sel) {
                 case 0: { // Peticion de entrar
                     EntrarMsg m = (EntrarMsg) entrarCh.in().read();
@@ -237,14 +235,14 @@ public class CarreteraCSP implements Carretera, CSProcess {
     /**
      * Intenta procesar una peticion de avanzar
      * Si el coche puede avanzar (ha esperado los ticks necesarios y hay hueco delante),
-     * lo mueve al siguiente segmento o lo saca de la carretera si ya está al final.
+     * lo mueve al siguiente segmento o lo saca de la carretera si ya esta al final.
      * @param m Mensaje de avance que contiene el id del coche, ticks y canal de respuesta
      * @return  devuelve true si la peticion fue atendida, false si no hay hueco o debe esperar.
      */
     private boolean procesarAvanzar(AvanzarMsg m) {
         Pos p = posiciones.get(m.id);               // Obtenemos la posicion actual del coche
         if (p == null) return false; 
-        if (ticksRem.get(m.id) > 0) return false;   // Debe esperar más ticks
+        if (ticksRem.get(m.id) > 0) return false;   // Debe esperar mas ticks
 
         int seg = p.getSegmento() - 1;
         int next = seg + 1;
